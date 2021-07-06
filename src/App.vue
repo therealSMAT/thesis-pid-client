@@ -2,19 +2,32 @@
   <div id="app">
     <div class="container">
       <div class="header">
-        <img src="https://upload.wikimedia.org/wikipedia/en/3/3d/Tallinna_Linnatranspordi_AS_logo.png" alt="tlt logo" width="64">
+        <img
+          src="https://upload.wikimedia.org/wikipedia/en/3/3d/Tallinna_Linnatranspordi_AS_logo.png"
+          alt="tlt logo"
+          width="64"
+        />
         <h1>Tallinna Linnatranspordi</h1>
       </div>
       <div class="item">
-        <div id="timeline">
-          <div>
-            <section class="date" v-for="{ time, location_name } in routes" :key="location_name">
+        <div id="timeline" v-if="routes.length">
+          <div >
+            <section
+              class="date"
+              v-for="{ time, location_name, tripId } in routes"
+              :key="location_name"
+            >
               <h3>{{ time }}</h3>
               <section>
-                <ul><li>{{ location_name }}</li></ul>
+                <ul :class="{'active': currentStop === tripId}">
+                  <li>{{ location_name }}</li>
+                </ul>
               </section>
             </section>
           </div>
+        </div>
+        <div v-else>
+          <h4>No route information!</h4>
         </div>
       </div>
     </div>
@@ -28,82 +41,56 @@ export default {
   name: "App",
   data() {
     return {
-      connection: {
-        clean: true,
-        connectTimeout: 4000,
-        reconnectPeriod: 4000,
-      },
       client: null,
-      messages: [],
-      routes: [
-        {
-          time: '19:17',
-          location_name: 'Vabaduse Valjak',
-        },
-        {
-          time: '19:15',
-          location_name: 'Tonismagi',
-        },
-        {
-          time: '19:14',
-          location_name: 'Koidu',
-        },
-        {
-          time: '19:10',
-          location_name: 'Taksopark',
-        },
-        {
-          time: '19:07',
-          location_name: 'Koskla',
-        },
-        {
-          time: '19:04',
-          location_name: 'Tedre',
-        },
-        {
-          time: '19:00',
-          location_name: 'Linnu Tee',
-        },
-        {
-          time: '18:58',
-          location_name: 'Siili',
-        },
-        {
-          time: '18:55',
-          location_name: 'Lepistiku',
-        },
-        {
-          time: '18:52',
-          location_name: 'Lehola',
-        },
-        {
-          time: '18:49',
-          location_name: 'Szolnok',
-        },
-        {
-          time: '18:47',
-          location_name: 'Kaja',
-        },
-        {
-          time: '18:43',
-          location_name: 'Akadeemia tee',
-        }
-      ],
+      routes: [],
+      currentStop: null,
     };
   },
   mounted() {
     this.createConnection();
   },
+  computed: {
+    clientId() {
+      return 'mqttjs_' + Math.random().toString(16).substr(2, 8)
+    },
+  },
   methods: {
     createConnection() {
-      const { ...options } = this.connection;
-      const connectUrl = `ws://broker.emqx.io:8083/mqtt`;
-      this.client = mqtt.connect(connectUrl, options);
-      this.client.subscribe("transport/timetable");
+      this.client = mqtt.connect(process.env.VUE_APP_MQTT_BROKER, { clientId: this.clientId });
 
+      this.subscribeToTopics();
+      this.handleErrors();
+      this.waitForMessages();
+    },
+    handleErrors() {
+      this.client.on("error", (err) => {
+        console.log("Connection error: ", err);
+        this.client.end();
+      });
+    },
+    subscribeToTopics() {
+      this.client.on("connect", () => {
+        this.client.subscribe("transport/ride/start");
+        this.client.subscribe("transport/currentStop");
+        this.client.subscribe("transport/ride/stop");
+        console.log("Subscribed successfully!");
+      });
+    },
+    waitForMessages() {
       this.client.on("message", (topic, message) => {
-        console.log(message, topic);
-        this.messages.push(message.toString());
+        if (topic === "transport/ride/start") {
+          let { data } = JSON.parse(message.toString());
+          this.$set(this, "routes", data);
+        }
+
+        if (topic === "transport/currentStop") {
+          this.currentStop = message.toString();
+        }
+
+        if (topic === 'transport/ride/stop') {
+          this.$set(this, "routes", []);
+          this.currentStop = null;
+        }
       });
     },
   },
@@ -167,9 +154,17 @@ div.header:after {
   z-index: 300;
   background: -moz-linear-gradient(top, white 20%, rgba(255, 255, 255, 0) 100%);
   /* FF3.6-15 */
-  background: -webkit-linear-gradient(top, white 20%, rgba(255, 255, 255, 0) 100%);
+  background: -webkit-linear-gradient(
+    top,
+    white 20%,
+    rgba(255, 255, 255, 0) 100%
+  );
   /* Chrome10-25,Safari5.1-6 */
-  background: linear-gradient(to bottom, white 20%, rgba(255, 255, 255, 0) 100%);
+  background: linear-gradient(
+    to bottom,
+    white 20%,
+    rgba(255, 255, 255, 0) 100%
+  );
   /* W3C, IE10+, FF16+, Chrome26+, Opera12+, Safari7+ */
   filter: progid:DXImageTransform.Microsoft.gradient( startColorstr="#ffffff", endColorstr="#00ffffff",GradientType=0 );
   /* IE6-9 */
@@ -293,6 +288,41 @@ div.item {
   top: 3px;
   z-index: 2;
 }
+#timeline section.date section ul.active:first-of-type:after {
+  background: #30a757;
+  animation-name: pulse-ring;
+  animation-duration: 2s;
+  animation-iteration-count: infinite;
+}
+#timeline section.date section ul.active li {
+  color: #30a757;
+  font-weight: 800;
+}
+@keyframes pulse-ring {
+  0% {
+    border-color: rgba(255, 255, 255, 0.5);
+    transform: scale(1);
+    box-shadow: 2px 2px 10px 0 #fffbfb, inset 2px 2px 10px #fffbfb;
+  }
+  25% {
+    transform: scale(0.98);
+    box-shadow: 2px 2px 10px 2.5px #fffbfb, inset 2px 2px 12px #fffbfb;
+  }
+  50% {
+    border-color: rgba(255, 255, 255, 0.75);
+    transform: scale(1);
+    box-shadow: 2px 2px 10px 5px #fffbfb, inset 2px 2px 10px #fffbfb;
+  }
+  75% {
+    transform: scale(0.98);
+    box-shadow: 2px 2px 10px 2.5px #fffbfb, inset 2px 2px 12px #fffbfb;
+  }
+  100% {
+    border-color: rgba(255, 255, 255, 0.5);
+    transform: scale(1);
+    box-shadow: 2px 2px 10px 0 #fffbfb, inset 2px 2px 10px #fffbfb;
+  }
+}
 #timeline section.date section ul li {
   margin-left: 0.5rem;
 }
@@ -318,5 +348,4 @@ svg {
   border-radius: 50%;
   box-shadow: 0 4px 6px rgba(50, 50, 93, 0.11), 0 1px 3px rgba(0, 0, 0, 0.08);
 }
-
 </style>
